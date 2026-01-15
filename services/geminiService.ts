@@ -98,6 +98,10 @@ export async function analyzeTranslation(
             type: Type.STRING,
             description: "Explanation of errors or praise in Vietnamese."
           },
+          markedUserTranslation: {
+            type: Type.STRING,
+            description: "Return the User's exact translation string, but wrap any incorrect, unnatural, or grammatically wrong words/phrases in double brackets like [[wrong word]]. If the sentence is perfect, return it unchanged."
+          },
           betterVersion: { 
             type: Type.STRING,
             description: "The most natural English translation."
@@ -122,7 +126,7 @@ export async function analyzeTranslation(
             items: { type: Type.STRING, description: "Grammar rules used in English." }
           }
         },
-        required: ["score", "analysis", "betterVersion", "alternative", "extractedVocab", "grammarPoints"],
+        required: ["score", "analysis", "markedUserTranslation", "betterVersion", "alternative", "extractedVocab", "grammarPoints"],
       }
     }
   });

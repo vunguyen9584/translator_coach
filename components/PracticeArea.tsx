@@ -35,6 +35,27 @@ const PracticeArea: React.FC<PracticeAreaProps> = ({
     onNext();
   };
 
+  // Helper to parse [[error]] markings
+  const renderMarkedTranslation = (text: string) => {
+    if (!text) return null;
+    const parts = text.split(/\[\[(.*?)\]\]/g);
+    return (
+      <span className="text-lg leading-relaxed">
+        {parts.map((part, i) => {
+          // Odd indices are captured groups (content inside brackets)
+          if (i % 2 === 1) {
+            return (
+              <span key={i} className="text-rose-500 font-bold decoration-rose-300 underline decoration-2 mx-1">
+                {part}
+              </span>
+            );
+          }
+          return <span key={i} className="text-slate-800">{part}</span>;
+        })}
+      </span>
+    );
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-20">
       {/* Intro section if it's the very beginning */}
@@ -111,15 +132,28 @@ const PracticeArea: React.FC<PracticeAreaProps> = ({
                 </div>
               </div>
 
-              <div className="bg-emerald-50 p-8 rounded-3xl border border-emerald-100">
-                <div className="text-xs font-bold text-emerald-600 uppercase mb-2">Better Version</div>
-                <p className="text-xl font-semibold text-emerald-900 leading-relaxed">{feedback.betterVersion}</p>
-                {feedback.alternative && (
-                  <div className="mt-4 pt-4 border-t border-emerald-200">
-                    <div className="text-[10px] font-bold text-emerald-500 uppercase mb-1">Alternative Phrasing</div>
-                    <p className="text-emerald-800 italic">{feedback.alternative}</p>
+              {/* User Correction & Better Version Block */}
+              <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+                
+                {/* Your Translation with Errors Marked */}
+                <div>
+                  <div className="text-xs font-bold text-slate-500 uppercase mb-2">Your Translation (Marked)</div>
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                    {renderMarkedTranslation(feedback.markedUserTranslation || translation)}
                   </div>
-                )}
+                </div>
+
+                {/* Better Version */}
+                <div className="pt-6 border-t border-slate-100">
+                  <div className="text-xs font-bold text-emerald-600 uppercase mb-2">Better Version</div>
+                  <p className="text-xl font-semibold text-emerald-900 leading-relaxed">{feedback.betterVersion}</p>
+                  {feedback.alternative && (
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                      <div className="text-[10px] font-bold text-emerald-500 uppercase mb-1">Alternative Phrasing</div>
+                      <p className="text-emerald-800 italic">{feedback.alternative}</p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

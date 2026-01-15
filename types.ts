@@ -36,6 +36,7 @@ export interface FeedbackData {
   score: number;
   analysis: string;
   betterVersion: string;
+  markedUserTranslation?: string;
   alternative?: string;
   extractedVocab: { word: string; meaning: string }[];
   grammarPoints: string[];
