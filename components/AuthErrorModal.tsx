@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface AuthErrorModalProps {
   isOpen: boolean;
@@ -9,9 +9,33 @@ interface AuthErrorModalProps {
 }
 
 const AuthErrorModal: React.FC<AuthErrorModalProps> = ({ isOpen, onClose, onDemoLogin, errorDomain }) => {
-  if (!isOpen) return null;
+  const [domainInfo, setDomainInfo] = useState<{ hostname: string; fullUrl: string }>({ 
+    hostname: 'loading...', 
+    fullUrl: '' 
+  });
 
-  const currentDomain = typeof window !== 'undefined' ? window.location.hostname : 'current-domain';
+  useEffect(() => {
+    if (isOpen && typeof window !== 'undefined') {
+      let currentHost = window.location.hostname;
+      
+      // Fallback strategies if hostname is empty (common in some web containers/iframes)
+      if (!currentHost) {
+        currentHost = window.location.host;
+      }
+      if (!currentHost) {
+        // Try to strip protocol from origin if all else fails
+        const origin = window.location.origin;
+        currentHost = origin.replace(/(^\w+:|^)\/\//, '');
+      }
+
+      setDomainInfo({
+        hostname: currentHost || 'unknown-domain',
+        fullUrl: window.location.href
+      });
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -41,11 +65,19 @@ const AuthErrorModal: React.FC<AuthErrorModalProps> = ({ isOpen, onClose, onDemo
 
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-6 text-sm">
           <p className="font-semibold text-slate-700 mb-2">To fix this in production:</p>
-          <ol className="list-decimal pl-4 space-y-1 text-slate-600">
+          <ol className="list-decimal pl-4 space-y-1 text-slate-600 mb-3">
             <li>Go to <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">Firebase Console</a></li>
             <li>Select your project &rarr; Authentication &rarr; Settings</li>
-            <li>Add <code className="bg-white px-1 py-0.5 rounded border border-slate-300 font-mono text-xs text-rose-600">{currentDomain}</code> to <strong>Authorized Domains</strong>.</li>
+            <li>Add the domain below to <strong>Authorized Domains</strong>:</li>
           </ol>
+          
+          <div className="bg-white p-2 border border-slate-300 rounded font-mono text-xs text-rose-600 break-all select-all">
+            {domainInfo.hostname}
+          </div>
+
+          <div className="mt-2 text-[10px] text-slate-400">
+            <span className="font-bold">Full URL (for debugging):</span> {domainInfo.fullUrl}
+          </div>
         </div>
 
         <div className="flex flex-col gap-3">
