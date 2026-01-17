@@ -50,6 +50,7 @@ export interface HistoryItem {
   feedback: FeedbackData;
   level: number;
   topic?: string;
+  isReview?: boolean; // New field to track if this was a review session
 }
 
 export interface VocabItem {
@@ -65,10 +66,24 @@ export interface GrammarItem {
   lastSeen: number;
 }
 
+// Data structure for sentences stored in Firestore
+export interface ReviewSentence {
+  id: string; // usually the vnSentence string or a hash
+  vnSentence: string;
+  topic: string;
+  level: number;
+  lastScore: number;
+  timestamp: number;
+}
+
 export interface AppState {
   currentLevel: number;
   currentTopic: string;
   history: HistoryItem[];
   vocabBank: Record<string, VocabItem>;
   grammarBank: Record<string, GrammarItem>;
+  // Logic for token optimization and review
+  recentSentences: string[]; // Store last 100 sentences locally to avoid repetition
+  sentencesSinceLastReview: number;
+  nextReviewThreshold: number; // Random number between 5-15
 }

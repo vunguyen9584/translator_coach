@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FeedbackData } from '../types';
 
 interface PracticeAreaProps {
@@ -10,6 +10,7 @@ interface PracticeAreaProps {
   onNext: () => void;
   onLevelChange: (level: number) => void;
   currentLevel: number;
+  isReviewMode?: boolean; // New Prop
 }
 
 const PracticeArea: React.FC<PracticeAreaProps> = ({ 
@@ -19,20 +20,21 @@ const PracticeArea: React.FC<PracticeAreaProps> = ({
   feedback, 
   onNext,
   onLevelChange,
-  currentLevel
+  currentLevel,
+  isReviewMode
 }) => {
   const [translation, setTranslation] = useState('');
+
+  // Reset translation when sentence changes
+  useEffect(() => {
+    setTranslation('');
+  }, [vnSentence]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (translation.trim() && !isLoading) {
       onSubmit(translation);
     }
-  };
-
-  const handleNextClick = () => {
-    setTranslation('');
-    onNext();
   };
 
   // Helper to parse [[error]] markings
@@ -86,8 +88,15 @@ const PracticeArea: React.FC<PracticeAreaProps> = ({
 
       {vnSentence && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          <div className="glass p-8 rounded-3xl border-l-8 border-indigo-500 shadow-sm">
-            <div className="text-xs font-semibold text-indigo-500 uppercase mb-2">Vietnamese Source (Level {currentLevel})</div>
+          <div className={`glass p-8 rounded-3xl border-l-8 shadow-sm relative overflow-hidden ${isReviewMode ? 'border-amber-500' : 'border-indigo-500'}`}>
+            {isReviewMode && (
+              <div className="absolute top-0 right-0 bg-amber-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl uppercase tracking-wider">
+                Review Mode
+              </div>
+            )}
+            <div className={`text-xs font-semibold uppercase mb-2 ${isReviewMode ? 'text-amber-600' : 'text-indigo-500'}`}>
+              {isReviewMode ? 'Review Old Mistake' : `Vietnamese Source (Level ${currentLevel})`}
+            </div>
             <p className="text-2xl font-medium text-slate-800 italic leading-relaxed">
               "{vnSentence}"
             </p>
@@ -189,32 +198,14 @@ const PracticeArea: React.FC<PracticeAreaProps> = ({
 
               <div className="flex gap-4">
                 <button
-                  onClick={handleNextClick}
+                  onClick={onNext}
                   className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold text-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-3"
                 >
-                  Next Sentence
+                  {isReviewMode ? "Complete Review" : "Next Sentence"}
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                   </svg>
                 </button>
-                <div className="relative group">
-                   <button
-                    className="h-full px-6 bg-slate-200 text-slate-700 rounded-2xl font-bold hover:bg-slate-300 transition-all"
-                  >
-                    Change Level
-                  </button>
-                  <div className="absolute bottom-full right-0 mb-2 p-2 bg-white border border-slate-200 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all grid grid-cols-5 gap-1 w-64 z-30">
-                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(lvl => (
-                        <button 
-                          key={lvl} 
-                          onClick={() => onLevelChange(lvl)}
-                          className="w-10 h-10 rounded-lg hover:bg-indigo-50 text-xs font-bold transition-all"
-                        >
-                          {lvl}
-                        </button>
-                     ))}
-                  </div>
-                </div>
               </div>
             </div>
           )}

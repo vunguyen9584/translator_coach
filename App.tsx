@@ -1,27 +1,48 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { HistoryItem, AppState, VocabItem, GrammarItem, FeedbackData, TOPICS } from './types';
-import { generateSentence, analyzeTranslation, resetChatSession } from './services/geminiService';
+import { generateSentence, analyzeTranslation } from './services/geminiService';
+import { 
+  signInWithGoogle, 
+  logoutUser, 
+  auth, 
+  saveLowScoreSentence, 
+  fetchReviewSentence, 
+  deleteReviewSentence 
+} from './services/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import PracticeArea from './components/PracticeArea';
 import Dashboard from './components/Dashboard';
 
-const STORAGE_KEY = 'lingo_coach_state_v1';
+const STORAGE_KEY = 'lingo_coach_state_v2';
 
 const App: React.FC = () => {
+  // --- Auth State ---
+  const [user, setUser] = useState<User | null>(null);
+
+  // --- App Logic State ---
   const [state, setState] = useState<AppState>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     const parsed = saved ? JSON.parse(saved) : null;
     return parsed ? {
       ...parsed,
-      currentTopic: parsed.currentTopic || TOPICS[0] // Ensure backward compatibility
+      currentTopic: parsed.currentTopic || TOPICS[0],
+      // Initialize new fields if they don't exist
+      recentSentences: parsed.recentSentences || [],
+      sentencesSinceLastReview: parsed.sentencesSinceLastReview || 0,
+      nextReviewThreshold: parsed.nextReviewThreshold || 5, 
     } : {
       currentLevel: 1,
       currentTopic: TOPICS[0],
       history: [],
       vocabBank: {},
       grammarBank: {},
+      recentSentences: [],
+      sentencesSinceLastReview: 0,
+      nextReviewThreshold: 5,
     };
   });
 
@@ -30,17 +51,59 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<FeedbackData | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
+  // Track if current sentence is a review sentence from Firebase
+  const [isReviewMode, setIsReviewMode] = useState<boolean>(false);
+
+  // --- Effects ---
+
+  // Auth Listener
+  useEffect(() => {
+    if (!auth) return;
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Persistence
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
 
+  // Initial Load (Only if empty)
+  useEffect(() => {
+    if (!currentVnSentence && view === 'practice' && !isLoading) {
+      handleNextSentence();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  // --- Methods ---
+
+  const handleLogin = async () => {
+    try {
+      await signInWithGoogle();
+      // Optionally sync data here in the future
+    } catch (e) {
+      alert("Login failed. Check console.");
+    }
+  };
+
+  const handleLogout = async () => {
+    await logoutUser();
+  };
+
   const fetchNewSentence = useCallback(async (level: number, topic: string) => {
     setIsLoading(true);
     setFeedback(null);
+    setIsReviewMode(false);
+    
     try {
-      const sentence = await generateSentence(level, topic);
+      // Token Optimization: Pass exclude list
+      // We take the last 50 items to keep prompt size reasonable
+      const excludeList = state.recentSentences.slice(0, 50);
+      const sentence = await generateSentence(level, topic, excludeList);
       setCurrentVnSentence(sentence);
     } catch (error) {
       console.error(error);
@@ -48,33 +111,45 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [state.recentSentences]);
 
-  useEffect(() => {
-    if (!currentVnSentence && view === 'practice') {
-      fetchNewSentence(state.currentLevel, state.currentTopic);
+  const handleNextSentence = useCallback(async () => {
+    // Logic: Check if we should review a low-score sentence
+    const shouldReview = 
+      user && // Must be logged in
+      state.sentencesSinceLastReview >= state.nextReviewThreshold;
+
+    if (shouldReview) {
+      setIsLoading(true);
+      setFeedback(null);
+      try {
+        const reviewData = await fetchReviewSentence(user.uid);
+        
+        if (reviewData) {
+          setIsReviewMode(true);
+          setCurrentVnSentence(reviewData.vnSentence);
+          // If the review sentence is a different level/topic, that's okay, 
+          // it's a review. But we could update UI to show "Review Mode"
+          setIsLoading(false);
+          return; // Done
+        } else {
+          // No review items found, proceed to normal generation
+          // Reset counter so we don't query empty DB every time
+          setState(prev => ({
+            ...prev,
+            sentencesSinceLastReview: 0,
+            nextReviewThreshold: Math.floor(Math.random() * 11) + 5 // Random 5-15
+          }));
+        }
+      } catch (e) {
+        console.error("Review fetch error", e);
+      }
     }
-  }, [state.currentLevel, state.currentTopic, currentVnSentence, view, fetchNewSentence]);
 
-  const handleLevelChange = async (newLevel: number) => {
-    await resetChatSession();
-    setState(prev => ({ ...prev, currentLevel: newLevel }));
-    setCurrentVnSentence('');
-    setFeedback(null);
-    setIsMobileMenuOpen(false); // Close menu on mobile selection
-  };
+    // Normal Flow
+    fetchNewSentence(state.currentLevel, state.currentTopic);
 
-  const handleTopicChange = async (newTopic: string) => {
-    setState(prev => ({ ...prev, currentTopic: newTopic }));
-    setCurrentVnSentence('');
-    setFeedback(null);
-    setIsMobileMenuOpen(false); // Close menu on mobile selection
-  };
-
-  const handleViewChange = (newView: 'practice' | 'stats') => {
-    setView(newView);
-    setIsMobileMenuOpen(false); // Close menu on mobile selection
-  }
+  }, [user, state.sentencesSinceLastReview, state.nextReviewThreshold, state.currentLevel, state.currentTopic, fetchNewSentence]);
 
   const handleSubmitTranslation = async (userTranslation: string) => {
     setIsLoading(true);
@@ -82,7 +157,25 @@ const App: React.FC = () => {
       const result = await analyzeTranslation(currentVnSentence, userTranslation, state.currentLevel);
       setFeedback(result);
 
-      // Update State
+      // --- Firebase Sync Logic ---
+      if (user) {
+        // 1. If score < 80, save to Firebase
+        if (result.score < 80) {
+          await saveLowScoreSentence(user.uid, {
+            vnSentence: currentVnSentence,
+            topic: state.currentTopic,
+            level: state.currentLevel,
+            score: result.score
+          });
+        }
+        // 2. If score == 100 and it WAS a review (or just check existence), delete it
+        // We delete if score is perfect to "graduate" the sentence
+        if (result.score === 100) {
+           await deleteReviewSentence(user.uid, currentVnSentence);
+        }
+      }
+
+      // --- State Update ---
       setState(prev => {
         const newHistoryItem: HistoryItem = {
           id: crypto.randomUUID(),
@@ -92,8 +185,10 @@ const App: React.FC = () => {
           feedback: result,
           level: prev.currentLevel,
           topic: prev.currentTopic,
+          isReview: isReviewMode,
         };
 
+        // Update Vocab Bank
         const newVocabBank = { ...prev.vocabBank };
         result.extractedVocab.forEach(v => {
           const key = v.word.toLowerCase();
@@ -105,6 +200,7 @@ const App: React.FC = () => {
           }
         });
 
+        // Update Grammar Bank
         const newGrammarBank = { ...prev.grammarBank };
         result.grammarPoints.forEach(p => {
           const key = p.toLowerCase();
@@ -116,11 +212,26 @@ const App: React.FC = () => {
           }
         });
 
+        // Update Recent Sentences (for anti-repetition)
+        // Keep only last 100
+        const newRecent = [currentVnSentence, ...prev.recentSentences].slice(0, 100);
+
+        // Update Review Logic
+        // If we just did a review, reset counter. If normal, increment.
+        const newCounter = isReviewMode ? 0 : prev.sentencesSinceLastReview + 1;
+        // If we just reset, calculate new threshold. Else keep same.
+        const newThreshold = isReviewMode 
+          ? Math.floor(Math.random() * 11) + 5 // Random 5-15
+          : prev.nextReviewThreshold;
+
         return {
           ...prev,
           history: [newHistoryItem, ...prev.history],
           vocabBank: newVocabBank,
           grammarBank: newGrammarBank,
+          recentSentences: newRecent,
+          sentencesSinceLastReview: newCounter,
+          nextReviewThreshold: newThreshold,
         };
       });
 
@@ -132,15 +243,34 @@ const App: React.FC = () => {
     }
   };
 
-  const handleNext = () => {
-    fetchNewSentence(state.currentLevel, state.currentTopic);
+  const handleLevelChange = (newLevel: number) => {
+    setState(prev => ({ ...prev, currentLevel: newLevel }));
+    setIsMobileMenuOpen(false);
+    // Note: We don't fetch immediately here to allow user to see transition, 
+    // but the useEffect or next click will handle it. 
+    // Actually, usually user wants immediate change:
+    if (view === 'practice') {
+        // Trigger fetch via side effect or direct call? 
+        // Direct call is safer to reset state immediately.
+        setCurrentVnSentence('');
+        setFeedback(null);
+        setTimeout(() => fetchNewSentence(newLevel, state.currentTopic), 10);
+    }
+  };
+
+  const handleTopicChange = (newTopic: string) => {
+    setState(prev => ({ ...prev, currentTopic: newTopic }));
+    setCurrentVnSentence('');
+    setFeedback(null);
+    setIsMobileMenuOpen(false);
+    setTimeout(() => fetchNewSentence(state.currentLevel, newTopic), 10);
   };
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <Sidebar 
         currentView={view} 
-        onViewChange={handleViewChange} 
+        onViewChange={setView} 
         currentLevel={state.currentLevel} 
         onLevelChange={handleLevelChange}
         currentTopic={state.currentTopic}
@@ -154,6 +284,9 @@ const App: React.FC = () => {
           history={state.history} 
           vocabCount={Object.keys(state.vocabBank).length} 
           onMenuClick={() => setIsMobileMenuOpen(true)}
+          user={user}
+          onLogin={handleLogin}
+          onLogout={handleLogout}
         />
         
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
@@ -163,9 +296,10 @@ const App: React.FC = () => {
               isLoading={isLoading}
               onSubmit={handleSubmitTranslation}
               feedback={feedback}
-              onNext={handleNext}
+              onNext={handleNextSentence}
               onLevelChange={handleLevelChange}
               currentLevel={state.currentLevel}
+              isReviewMode={isReviewMode}
             />
           ) : (
             <Dashboard 

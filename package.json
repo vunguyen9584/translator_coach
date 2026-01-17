@@ -13,7 +13,8 @@
     "recharts": "^3.6.0",
     "react-dom": "^19.2.3",
     "@google/genai": "^1.36.0",
-    "@heroicons/react": "^2.2.0"
+    "@heroicons/react": "^2.2.0",
+    "firebase": "^12.8.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

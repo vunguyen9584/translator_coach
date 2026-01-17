@@ -1,10 +1,10 @@
 
-import { GoogleGenAI, Type, Chat } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { FeedbackData } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const SYSTEM_INSTRUCTION = `
+const SYSTEM_INSTRUCTION_BASE = `
 Act as an Expert English Translation Coach for Vietnamese learners. 
 Goal: Help improve Vietnamese-to-English translation skills.
 
@@ -17,46 +17,49 @@ RULES:
    - "alternative": MUST be in English. It's another valid English way to express the same idea.
    - "extractedVocab": "word" (English), "meaning" (Vietnamese).
    - "grammarPoints": English grammatical terms/rules.
-4. VARIETY: Do NOT repeat sentences used previously in this session.
-5. Tone: Professional, encouraging, and pedagogically sound.
+4. Tone: Professional, encouraging, and pedagogically sound.
 `;
 
-let currentChat: Chat | null = null;
-
-function getChatSession(level: number): Chat {
-  if (!currentChat) {
-    currentChat = ai.chats.create({
-      model: 'gemini-3-flash-preview',
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.85, // Increased slightly for better topic randomness
-      },
-    });
-  }
-  return currentChat;
-}
-
-export async function resetChatSession() {
-  currentChat = null;
-}
-
-export async function generateSentence(level: number, topic: string): Promise<string> {
-  const chat = getChatSession(level);
+// Stateless generation
+export async function generateSentence(
+  level: number, 
+  topic: string, 
+  avoidSentences: string[] = []
+): Promise<string> {
   
   const topicInstruction = topic === "Random (Mix)" 
-    ? "Topic: Random (Pick a specific, interesting topic different from the previous one)"
+    ? "Topic: Random (Pick a specific, interesting topic)"
     : `Topic: ${topic}`;
 
-  const response = await chat.sendMessage({
-    message: `ACTION: Generate a new, unique Vietnamese sentence at Level ${level}.
-    ${topicInstruction}
-    Ensure it is natural and context-rich. 
-    DO NOT repeat any previous sentences.
-    Return ONLY the Vietnamese sentence text.`
+  // We limit the avoidance list to the last 20 to save input tokens, 
+  // relying on the model's randomness for older items.
+  const recentAvoidance = avoidSentences.slice(0, 20);
+  const avoidanceInstruction = recentAvoidance.length > 0
+    ? `IMPORTANT: DO NOT generate any of the following sentences: ${JSON.stringify(recentAvoidance)}`
+    : "";
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    config: {
+      systemInstruction: SYSTEM_INSTRUCTION_BASE,
+      temperature: 0.9, // Higher temperature for variety since we are stateless
+    },
+    contents: {
+      parts: [
+        {
+          text: `ACTION: Generate a single new, unique Vietnamese sentence at Level ${level}.
+          ${topicInstruction}
+          ${avoidanceInstruction}
+          Ensure it is natural and context-rich.
+          Return ONLY the Vietnamese sentence text.`
+        }
+      ]
+    }
   });
   
-  let text = response.text.trim();
+  let text = response.text?.trim() || "";
   
+  // Cleanup JSON or Markdown artifacts if any
   if (text.startsWith('{') || text.includes('"')) {
     try {
       const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -75,17 +78,12 @@ export async function analyzeTranslation(
   userTranslation: string, 
   level: number
 ): Promise<FeedbackData> {
-  const chat = getChatSession(level);
-
-  const response = await chat.sendMessage({
-    message: `
-      SOURCE VN: "${vnSentence}"
-      USER EN TRANSLATION: "${userTranslation}"
-      Difficulty Level: ${level}
-      
-      Provide feedback. Remember: "betterVersion" and "alternative" MUST BE ENGLISH.
-    `,
+  
+  // Stateless call - we send the context (vnSentence) again.
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
     config: {
+      systemInstruction: SYSTEM_INSTRUCTION_BASE,
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -128,11 +126,23 @@ export async function analyzeTranslation(
         },
         required: ["score", "analysis", "markedUserTranslation", "betterVersion", "alternative", "extractedVocab", "grammarPoints"],
       }
+    },
+    contents: {
+      parts: [{
+        text: `
+          SOURCE VN: "${vnSentence}"
+          USER EN TRANSLATION: "${userTranslation}"
+          Difficulty Level: ${level}
+          
+          Provide feedback. Remember: "betterVersion" and "alternative" MUST BE ENGLISH.
+        `
+      }]
     }
   });
 
   try {
-    const text = response.text.trim();
+    const text = response.text?.trim();
+    if (!text) throw new Error("Empty response");
     return JSON.parse(text);
   } catch (e) {
     console.error("Failed to parse AI response", e);
