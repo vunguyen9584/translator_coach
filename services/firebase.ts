@@ -1,18 +1,16 @@
 
-import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, User } from "firebase/auth";
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  setDoc, 
-  deleteDoc, 
-  getDocs, 
-  query, 
-  where, 
-  limit,
-  orderBy 
-} from "firebase/firestore";
+// Use wildcard imports and cast to any to avoid "Module has no exported member" errors
+// which occur in some environments where Firebase types are not correctly resolved.
+import * as firebaseApp from "firebase/app";
+import * as firebaseAuth from "firebase/auth";
+import * as firebaseFirestore from "firebase/firestore";
+import { User } from "../types";
+
+const { initializeApp } = firebaseApp as any;
+const { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } = firebaseAuth as any;
+const { 
+  getFirestore, collection, doc, setDoc, deleteDoc, getDocs, query, where, limit, orderBy 
+} = firebaseFirestore as any;
 
 // TODO: REPLACE WITH YOUR OWN FIREBASE CONFIGURATION
 // You can get this from the Firebase Console -> Project Settings -> General -> Your apps
@@ -33,8 +31,10 @@ let googleProvider: any;
 
 try {
   // Check if we are in a "demo" mode or if the user hasn't set up keys yet.
-  // Ideally, use environment variables.
-  if (process.env.FIREBASE_API_KEY) {
+  // We check typeof process to avoid ReferenceError in browser environments without polyfills
+  const hasEnv = typeof process !== 'undefined' && process.env;
+  
+  if (hasEnv && process.env.FIREBASE_API_KEY) {
      const envConfig = {
         apiKey: process.env.FIREBASE_API_KEY,
         authDomain: process.env.FIREBASE_AUTH_DOMAIN,
@@ -46,7 +46,7 @@ try {
      app = initializeApp(envConfig);
   } else {
      // Fallback for demo purposes if no env vars (won't actually connect)
-     console.warn("Firebase config missing. Auth features will be simulated or disabled.");
+     console.warn("Using default/placeholder Firebase config.");
      app = initializeApp(firebaseConfig);
   }
   
@@ -59,12 +59,32 @@ try {
 
 export { auth, db };
 
-export const signInWithGoogle = async () => {
-  if (!auth) throw new Error("Firebase not initialized");
+// Mock user generator
+const createMockUser = (): User => {
+  return {
+    uid: 'mock-user-' + Date.now(),
+    displayName: 'Demo User',
+    email: 'demo@lingocoach.com',
+    photoURL: 'https://ui-avatars.com/api/?name=Demo+User&background=random',
+  } as User;
+};
+
+// EXPORT THIS FUNCTION SO UI CAN CALL IT DIRECTLY
+export const loginAsDemoUser = async (): Promise<User> => {
+  return createMockUser();
+};
+
+export const signInWithGoogle = async (): Promise<User | null> => {
+  if (!auth || !googleProvider) {
+    console.warn("Firebase not initialized. Returning mock user.");
+    return createMockUser();
+  }
   try {
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
-  } catch (error) {
+  } catch (error: any) {
+    // IMPORTANT: We now throw the error so the UI can decide what to do
+    // instead of silently falling back to demo user.
     console.error("Login failed", error);
     throw error;
   }
@@ -72,7 +92,20 @@ export const signInWithGoogle = async () => {
 
 export const logoutUser = async () => {
   if (!auth) return;
-  await signOut(auth);
+  try {
+    await signOut(auth);
+  } catch (e) {
+    console.error("Logout error", e);
+  }
+};
+
+export const subscribeToAuthChanges = (callback: (user: User | null) => void) => {
+  if (auth && onAuthStateChanged) {
+    return onAuthStateChanged(auth, callback);
+  }
+  // If auth is not active, just return null user
+  callback(null);
+  return () => {};
 };
 
 // --- Firestore Helpers ---
@@ -85,11 +118,8 @@ export const saveLowScoreSentence = async (userId: string, data: {
   level: number;
   score: number;
 }) => {
-  if (!db) return;
+  if (!db || userId.startsWith('mock-user')) return; // Skip DB for mock users
   try {
-    // Use the sentence itself as ID (base64 encoded to be safe) or just a hash
-    // Simple approach: auto-id, but query by content. 
-    // Better approach for deduplication: create a deterministic ID from the sentence
     const id = btoa(unescape(encodeURIComponent(data.vnSentence))).replace(/\//g, '_');
     
     await setDoc(doc(db, "users", userId, LOW_SCORE_COLLECTION, id), {
@@ -100,23 +130,27 @@ export const saveLowScoreSentence = async (userId: string, data: {
       timestamp: Date.now()
     });
   } catch (e) {
+    // Silent fail for demo/mock
+    if (userId.startsWith('mock-user')) return;
     console.error("Error saving low score:", e);
   }
 };
 
 export const deleteReviewSentence = async (userId: string, vnSentence: string) => {
-  if (!db) return;
+  if (!db || userId.startsWith('mock-user')) return;
   try {
     const id = btoa(unescape(encodeURIComponent(vnSentence))).replace(/\//g, '_');
     await deleteDoc(doc(db, "users", userId, LOW_SCORE_COLLECTION, id));
     console.log("Review sentence deleted/mastered:", vnSentence);
   } catch (e) {
+     // Silent fail for demo/mock
+    if (userId.startsWith('mock-user')) return;
     console.error("Error deleting review sentence:", e);
   }
 };
 
 export const fetchReviewSentence = async (userId: string): Promise<any | null> => {
-  if (!db) return null;
+  if (!db || userId.startsWith('mock-user')) return null;
   try {
     const q = query(
       collection(db, "users", userId, LOW_SCORE_COLLECTION),
@@ -129,6 +163,8 @@ export const fetchReviewSentence = async (userId: string): Promise<any | null> =
     }
     return null;
   } catch (e) {
+     // Silent fail for demo/mock
+    if (userId.startsWith('mock-user')) return null;
     console.error("Error fetching review:", e);
     return null;
   }

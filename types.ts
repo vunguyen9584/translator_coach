@@ -87,3 +87,10 @@ export interface AppState {
   sentencesSinceLastReview: number;
   nextReviewThreshold: number; // Random number between 5-15
 }
+
+export interface User {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+}

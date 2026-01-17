@@ -1,7 +1,6 @@
 
 import React from 'react';
-import { HistoryItem } from '../types';
-import { User } from 'firebase/auth';
+import { HistoryItem, User } from '../types';
 
 interface HeaderProps {
   history: HistoryItem[];

@@ -1,27 +1,30 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { HistoryItem, AppState, VocabItem, GrammarItem, FeedbackData, TOPICS } from './types';
+import { HistoryItem, AppState, VocabItem, GrammarItem, FeedbackData, TOPICS, User } from './types';
 import { generateSentence, analyzeTranslation } from './services/geminiService';
 import { 
   signInWithGoogle, 
   logoutUser, 
+  loginAsDemoUser,
   auth, 
   saveLowScoreSentence, 
   fetchReviewSentence, 
-  deleteReviewSentence 
+  deleteReviewSentence,
+  subscribeToAuthChanges
 } from './services/firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
 
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import PracticeArea from './components/PracticeArea';
 import Dashboard from './components/Dashboard';
+import AuthErrorModal from './components/AuthErrorModal';
 
 const STORAGE_KEY = 'lingo_coach_state_v2';
 
 const App: React.FC = () => {
   // --- Auth State ---
   const [user, setUser] = useState<User | null>(null);
+  const [showAuthError, setShowAuthError] = useState(false);
 
   // --- App Logic State ---
   const [state, setState] = useState<AppState>(() => {
@@ -59,9 +62,12 @@ const App: React.FC = () => {
 
   // Auth Listener
   useEffect(() => {
-    if (!auth) return;
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    const unsubscribe = subscribeToAuthChanges((currentUser) => {
+      // Only set user if we haven't manually set a mock user (which might trigger null here first if real auth isn't connected)
+      // However, usually onAuthStateChanged is the source of truth.
+      if (currentUser) {
+        setUser(currentUser);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -83,15 +89,32 @@ const App: React.FC = () => {
 
   const handleLogin = async () => {
     try {
-      await signInWithGoogle();
-      // Optionally sync data here in the future
-    } catch (e) {
-      alert("Login failed. Check console.");
+      const loggedInUser = await signInWithGoogle();
+      if (loggedInUser) {
+        setUser(loggedInUser);
+      }
+    } catch (e: any) {
+      const errorCode = e?.code;
+      console.error("Login Error in App", e);
+
+      // Check specifically for domain errors or operation not allowed
+      if (errorCode === 'auth/unauthorized-domain' || errorCode === 'auth/operation-not-allowed') {
+        setShowAuthError(true);
+      } else {
+        alert("Login failed: " + (e.message || "Unknown error"));
+      }
     }
+  };
+
+  const handleDemoLogin = async () => {
+    const demoUser = await loginAsDemoUser();
+    setUser(demoUser);
+    setShowAuthError(false);
   };
 
   const handleLogout = async () => {
     await logoutUser();
+    setUser(null);
   };
 
   const fetchNewSentence = useCallback(async (level: number, topic: string) => {
@@ -246,12 +269,7 @@ const App: React.FC = () => {
   const handleLevelChange = (newLevel: number) => {
     setState(prev => ({ ...prev, currentLevel: newLevel }));
     setIsMobileMenuOpen(false);
-    // Note: We don't fetch immediately here to allow user to see transition, 
-    // but the useEffect or next click will handle it. 
-    // Actually, usually user wants immediate change:
     if (view === 'practice') {
-        // Trigger fetch via side effect or direct call? 
-        // Direct call is safer to reset state immediately.
         setCurrentVnSentence('');
         setFeedback(null);
         setTimeout(() => fetchNewSentence(newLevel, state.currentTopic), 10);
@@ -309,6 +327,13 @@ const App: React.FC = () => {
             />
           )}
         </div>
+        
+        {/* Domain Error Modal */}
+        <AuthErrorModal 
+          isOpen={showAuthError} 
+          onClose={() => setShowAuthError(false)}
+          onDemoLogin={handleDemoLogin}
+        />
       </main>
     </div>
   );
