@@ -8,48 +8,42 @@ import { User } from "../types";
 
 const { initializeApp } = firebaseApp as any;
 const { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } = firebaseAuth as any;
-const { 
-  getFirestore, collection, doc, setDoc, deleteDoc, getDocs, query, where, limit, orderBy 
+const {
+  getFirestore, collection, doc, setDoc, deleteDoc, getDocs, query, where, limit, orderBy
 } = firebaseFirestore as any;
 
-// TODO: REPLACE WITH YOUR OWN FIREBASE CONFIGURATION
-// You can get this from the Firebase Console -> Project Settings -> General -> Your apps
+// Firebase Configuration from Environment Variables
+// All values are loaded from .env file (see .env.example for template)
 const firebaseConfig = {
-  apiKey: "AIzaSyCtTAhRz7PTnNA86GMJG9XISetUmdZ3LLk",
-  authDomain: "lingocoach-71f0b.firebaseapp.com",
-  projectId: "lingocoach-71f0b",
-  storageBucket: "lingocoach-71f0b.firebasestorage.app",
-  messagingSenderId: "963480789489",
-  appId: "1:963480789489:web:74910f40602dff2c012450"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-// Initialize Firebase only if config is valid (prevent crash on placeholder)
+// Validate that all required environment variables are present
+const missingVars = Object.entries(firebaseConfig)
+  .filter(([key, value]) => !value)
+  .map(([key]) => key);
+
+if (missingVars.length > 0) {
+  console.error(
+    '❌ Missing Firebase environment variables:',
+    missingVars,
+    '\n📝 Please copy .env.example to .env and fill in your Firebase credentials'
+  );
+}
+
+// Initialize Firebase
 let app;
 let auth: any;
 let db: any;
 let googleProvider: any;
 
 try {
-  // Check if we are in a "demo" mode or if the user hasn't set up keys yet.
-  // We check typeof process to avoid ReferenceError in browser environments without polyfills
-  const hasEnv = typeof process !== 'undefined' && process.env;
-  
-  if (hasEnv && process.env.FIREBASE_API_KEY) {
-     const envConfig = {
-        apiKey: process.env.FIREBASE_API_KEY,
-        authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-        appId: process.env.FIREBASE_APP_ID
-     }
-     app = initializeApp(envConfig);
-  } else {
-     // Fallback for demo purposes if no env vars (won't actually connect)
-     console.warn("Using default/placeholder Firebase config.");
-     app = initializeApp(firebaseConfig);
-  }
-  
+  app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
   googleProvider = new GoogleAuthProvider();
@@ -57,7 +51,7 @@ try {
   console.error("Firebase Initialization Error:", e);
 }
 
-export { auth, db };
+export { auth, db, app };
 
 // Mock user generator
 const createMockUser = (): User => {
@@ -105,7 +99,7 @@ export const subscribeToAuthChanges = (callback: (user: User | null) => void) =>
   }
   // If auth is not active, just return null user
   callback(null);
-  return () => {};
+  return () => { };
 };
 
 // --- Firestore Helpers ---
@@ -121,7 +115,7 @@ export const saveLowScoreSentence = async (userId: string, data: {
   if (!db || userId.startsWith('mock-user')) return; // Skip DB for mock users
   try {
     const id = btoa(unescape(encodeURIComponent(data.vnSentence))).replace(/\//g, '_');
-    
+
     await setDoc(doc(db, "users", userId, LOW_SCORE_COLLECTION, id), {
       vnSentence: data.vnSentence,
       topic: data.topic,
@@ -143,7 +137,7 @@ export const deleteReviewSentence = async (userId: string, vnSentence: string) =
     await deleteDoc(doc(db, "users", userId, LOW_SCORE_COLLECTION, id));
     console.log("Review sentence deleted/mastered:", vnSentence);
   } catch (e) {
-     // Silent fail for demo/mock
+    // Silent fail for demo/mock
     if (userId.startsWith('mock-user')) return;
     console.error("Error deleting review sentence:", e);
   }
@@ -163,7 +157,7 @@ export const fetchReviewSentence = async (userId: string): Promise<any | null> =
     }
     return null;
   } catch (e) {
-     // Silent fail for demo/mock
+    // Silent fail for demo/mock
     if (userId.startsWith('mock-user')) return null;
     console.error("Error fetching review:", e);
     return null;

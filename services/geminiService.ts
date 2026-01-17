@@ -1,151 +1,93 @@
-
-import { GoogleGenAI, Type } from "@google/genai";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { FeedbackData } from "../types";
+import { app } from "./firebase";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Initialize Firebase Functions with Asia Southeast region
+// This matches the region where our Cloud Functions are deployed
+const functions = getFunctions(app, "asia-southeast1");
 
-const SYSTEM_INSTRUCTION_BASE = `
-Act as an Expert English Translation Coach for Vietnamese learners. 
-Goal: Help improve Vietnamese-to-English translation skills.
-
-RULES:
-1. Difficulty Levels: 1 (Beginner) to 10 (Proficiency).
-2. Process: Generate a VN sentence -> Wait for translation -> Analyze -> Provide Feedback.
-3. LANGUAGE RULES:
-   - "analysis": Write in Vietnamese to explain nuances and errors clearly to the learner.
-   - "betterVersion": MUST be in English. It's the most natural/correct translation.
-   - "alternative": MUST be in English. It's another valid English way to express the same idea.
-   - "extractedVocab": "word" (English), "meaning" (Vietnamese).
-   - "grammarPoints": English grammatical terms/rules.
-4. Tone: Professional, encouraging, and pedagogically sound.
-`;
-
-// Stateless generation
+/**
+ * Generate a Vietnamese sentence for translation practice
+ * Now calls Cloud Function instead of direct Gemini API
+ * 
+ * @param level - Difficulty level (1-10)
+ * @param topic - Topic for the sentence
+ * @param avoidSentences - Array of sentences to avoid generating
+ * @returns Vietnamese sentence string
+ */
 export async function generateSentence(
-  level: number, 
-  topic: string, 
+  level: number,
+  topic: string,
   avoidSentences: string[] = []
 ): Promise<string> {
-  
-  const topicInstruction = topic === "Random (Mix)" 
-    ? "Topic: Random (Pick a specific, interesting topic)"
-    : `Topic: ${topic}`;
+  try {
+    const generateSentenceCallable = httpsCallable<
+      { level: number; topic: string; avoidSentences?: string[] },
+      { sentence: string }
+    >(functions, "generateSentence");
 
-  // We limit the avoidance list to the last 20 to save input tokens, 
-  // relying on the model's randomness for older items.
-  const recentAvoidance = avoidSentences.slice(0, 20);
-  const avoidanceInstruction = recentAvoidance.length > 0
-    ? `IMPORTANT: DO NOT generate any of the following sentences: ${JSON.stringify(recentAvoidance)}`
-    : "";
+    const result = await generateSentenceCallable({
+      level,
+      topic,
+      avoidSentences: avoidSentences.slice(0, 20), // Limit to last 20
+    });
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION_BASE,
-      temperature: 0.9, // Higher temperature for variety since we are stateless
-    },
-    contents: {
-      parts: [
-        {
-          text: `ACTION: Generate a single new, unique Vietnamese sentence at Level ${level}.
-          ${topicInstruction}
-          ${avoidanceInstruction}
-          Ensure it is natural and context-rich.
-          Return ONLY the Vietnamese sentence text.`
-        }
-      ]
+    return result.data.sentence;
+  } catch (error: any) {
+    console.error("Error calling generateSentence Cloud Function:", error);
+
+    // Provide user-friendly error messages
+    if (error.code === "functions/unauthenticated") {
+      throw new Error("Bạn cần đăng nhập để sử dụng tính năng này");
+    } else if (error.code === "functions/invalid-argument") {
+      throw new Error("Thông tin không hợp lệ. Vui lòng kiểm tra lại.");
+    } else if (error.code === "functions/internal") {
+      throw new Error("Lỗi hệ thống. Vui lòng thử lại sau.");
     }
-  });
-  
-  let text = response.text?.trim() || "";
-  
-  // Cleanup JSON or Markdown artifacts if any
-  if (text.startsWith('{') || text.includes('"')) {
-    try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        text = parsed.vietnamese_sentence || parsed.sentence || text;
-      }
-    } catch (e) {}
-  }
 
-  return text.replace(/\*\*/g, '').replace(/^["']|["']$/g, '').trim();
+    throw new Error("Không thể tạo câu mới. Vui lòng thử lại.");
+  }
 }
 
+/**
+ * Analyze user's translation
+ * Now calls Cloud Function instead of direct Gemini API
+ * 
+ * @param vnSentence - Original Vietnamese sentence
+ * @param userTranslation - User's English translation
+ * @param level - Difficulty level
+ * @returns Detailed feedback data
+ */
 export async function analyzeTranslation(
-  vnSentence: string, 
-  userTranslation: string, 
+  vnSentence: string,
+  userTranslation: string,
   level: number
 ): Promise<FeedbackData> {
-  
-  // Stateless call - we send the context (vnSentence) again.
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION_BASE,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          score: { 
-            type: Type.NUMBER,
-            description: "Score from 0 to 100 based on accuracy and naturalness."
-          },
-          analysis: { 
-            type: Type.STRING,
-            description: "Explanation of errors or praise in Vietnamese."
-          },
-          markedUserTranslation: {
-            type: Type.STRING,
-            description: "Return the User's exact translation string, but wrap any incorrect, unnatural, or grammatically wrong words/phrases in double brackets like [[wrong word]]. If the sentence is perfect, return it unchanged."
-          },
-          betterVersion: { 
-            type: Type.STRING,
-            description: "The most natural English translation."
-          },
-          alternative: { 
-            type: Type.STRING,
-            description: "Another valid English phrasing (NOT Vietnamese)."
-          },
-          extractedVocab: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                word: { type: Type.STRING, description: "The English word." },
-                meaning: { type: Type.STRING, description: "The Vietnamese meaning." }
-              },
-              required: ["word", "meaning"]
-            }
-          },
-          grammarPoints: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING, description: "Grammar rules used in English." }
-          }
-        },
-        required: ["score", "analysis", "markedUserTranslation", "betterVersion", "alternative", "extractedVocab", "grammarPoints"],
-      }
-    },
-    contents: {
-      parts: [{
-        text: `
-          SOURCE VN: "${vnSentence}"
-          USER EN TRANSLATION: "${userTranslation}"
-          Difficulty Level: ${level}
-          
-          Provide feedback. Remember: "betterVersion" and "alternative" MUST BE ENGLISH.
-        `
-      }]
-    }
-  });
-
   try {
-    const text = response.text?.trim();
-    if (!text) throw new Error("Empty response");
-    return JSON.parse(text);
-  } catch (e) {
-    console.error("Failed to parse AI response", e);
-    throw new Error("Failed to analyze translation");
+    const analyzeTranslationCallable = httpsCallable<
+      { vnSentence: string; userTranslation: string; level: number },
+      FeedbackData
+    >(functions, "analyzeTranslation");
+
+    const result = await analyzeTranslationCallable({
+      vnSentence,
+      userTranslation,
+      level,
+    });
+
+    return result.data;
+  } catch (error: any) {
+    console.error("Error calling analyzeTranslation Cloud Function:", error);
+
+    // Provide user-friendly error messages
+    if (error.code === "functions/unauthenticated") {
+      throw new Error("Bạn cần đăng nhập để sử dụng tính năng này");
+    } else if (error.code === "functions/invalid-argument") {
+      throw new Error("Thông tin không hợp lệ. Vui lòng kiểm tra lại.");
+    } else if (error.code === "functions/internal") {
+      throw new Error("Lỗi phân tích. Vui lòng thử lại sau.");
+    }
+
+    throw new Error("Không thể phân tích bản dịch. Vui lòng thử lại.");
   }
 }
